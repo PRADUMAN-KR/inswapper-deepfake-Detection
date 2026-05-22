@@ -2,6 +2,8 @@ import argparse
 import csv
 import json
 import shutil
+import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Any
 
@@ -25,6 +27,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--root-dir", default=None, help="Base directory for relative image paths. Defaults to metadata parent.")
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--chunk-size", type=int, default=512)
+    parser.add_argument("--workers", type=int, default=1, help="Image decode workers. Try 2 or 4 for Zarr packing.")
+    parser.add_argument("--log-every", type=int, default=500, help="Print progress every N successfully packed samples.")
+    parser.add_argument("--verbose", action="store_true", help="Print one line for every packed sample.")
     parser.add_argument("--overwrite", action="store_true")
     return parser.parse_args()
 
@@ -52,6 +57,15 @@ def load_image(path: Path, image_size: int) -> np.ndarray:
         return np.asarray(image, dtype=np.uint8)
 
 
+def load_sample(index: int, path: str, root_dir: Path, image_size: int) -> dict[str, Any]:
+    image_path = resolve_image_path(path, root_dir)
+    try:
+        image = load_image(image_path, image_size)
+    except Exception as exc:
+        return {"ok": False, "index": index, "path": image_path, "reason": repr(exc)}
+    return {"ok": True, "index": index, "path": image_path, "image": image}
+
+
 def create_array(group: Any, name: str, *, shape: tuple[int, ...], chunks: tuple[int, ...], dtype: Any) -> Any:
     if hasattr(group, "create_array"):
         return group.create_array(name, shape=shape, chunks=chunks, dtype=dtype)
@@ -60,6 +74,17 @@ def create_array(group: Any, name: str, *, shape: tuple[int, ...], chunks: tuple
 
 def write_metadata_copy(frame: pd.DataFrame, output: Path) -> None:
     frame.to_csv(output / "metadata.csv", index=False)
+
+
+def log_progress(written: int, total: int, failures: int, started_at: float, *, prefix: str = "progress") -> None:
+    elapsed = max(time.time() - started_at, 1e-6)
+    samples_per_minute = written / (elapsed / 60)
+    eta_min = ((total - written) / max(samples_per_minute, 1e-6)) if written else 0.0
+    print(
+        f"{prefix} [{written}/{total}] failures={failures} "
+        f"elapsed={elapsed / 60:.1f}m speed={samples_per_minute:.1f} samples/min eta={eta_min:.1f}m",
+        flush=True,
+    )
 
 
 def main() -> None:
@@ -108,20 +133,88 @@ def main() -> None:
 
     failures: list[dict[str, str]] = []
     written = 0
-    for index, row in frame.iterrows():
-        image_path = resolve_image_path(str(row["path"]), root_dir)
-        try:
-            images[index] = load_image(image_path, args.image_size)
-        except Exception as exc:
-            failures.append({"index": str(index), "path": str(image_path), "reason": repr(exc)})
-            continue
+    log_every = max(1, int(args.log_every))
+    started_at = time.time()
+    workers = max(1, int(args.workers))
+    print(
+        f"packing {sample_count} samples into {output_path} image_size={args.image_size} "
+        f"chunk_size={args.chunk_size} workers={workers}",
+        flush=True,
+    )
+    log_progress(0, sample_count, len(failures), started_at, prefix="start")
+
+    def write_loaded_sample(index: int, image_path: Path, image: np.ndarray) -> None:
+        row = frame.iloc[index]
+        images[index] = image
         labels[index] = int(row["label"])
         is_inswapper[index] = int(row["is_inswapper"])
         boundary[index] = int(row["boundary_label"])
         quality[index] = int(row["quality_label"])
-        written += 1
-        if written % 1000 == 0:
-            print(f"packed {written}/{sample_count} samples")
+        if args.verbose:
+            print(f"packed sample index={index} path={image_path}", flush=True)
+
+    if workers == 1:
+        for index, row in frame.iterrows():
+            image_path = resolve_image_path(str(row["path"]), root_dir)
+            try:
+                loaded = load_sample(index, str(row["path"]), root_dir, int(args.image_size))
+                if not loaded["ok"]:
+                    raise RuntimeError(str(loaded["reason"]))
+                write_loaded_sample(int(loaded["index"]), Path(loaded["path"]), loaded["image"])
+            except Exception as exc:
+                failures.append({"index": str(index), "path": str(image_path), "reason": repr(exc)})
+                print(f"failed sample index={index} path={image_path} reason={exc!r}", flush=True)
+                continue
+            written += 1
+            if written % log_every == 0:
+                log_progress(written, sample_count, len(failures), started_at)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            pending = set()
+            row_iter = frame.iterrows()
+            max_pending = workers * 4
+
+            def submit_next() -> bool:
+                try:
+                    index, row = next(row_iter)
+                except StopIteration:
+                    return False
+                pending.add(executor.submit(load_sample, index, str(row["path"]), root_dir, int(args.image_size)))
+                return True
+
+            for _ in range(min(max_pending, sample_count)):
+                submit_next()
+
+            while pending:
+                done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                for future in done:
+                    try:
+                        loaded = future.result()
+                        if loaded["ok"]:
+                            write_loaded_sample(int(loaded["index"]), Path(loaded["path"]), loaded["image"])
+                        else:
+                            failures.append(
+                                {
+                                    "index": str(loaded["index"]),
+                                    "path": str(loaded["path"]),
+                                    "reason": str(loaded["reason"]),
+                                }
+                            )
+                            print(
+                                f"failed sample index={loaded['index']} path={loaded['path']} reason={loaded['reason']}",
+                                flush=True,
+                            )
+                            submit_next()
+                            continue
+                    except Exception as exc:
+                        failures.append({"index": "-1", "path": "", "reason": repr(exc)})
+                        print(f"failed sample index=-1 path= reason={exc!r}", flush=True)
+                        submit_next()
+                        continue
+                    written += 1
+                    if written % log_every == 0:
+                        log_progress(written, sample_count, len(failures), started_at)
+                    submit_next()
 
     if failures:
         failure_path = output_path.with_suffix(".failures.csv")
@@ -144,7 +237,8 @@ def main() -> None:
     with open(output_path / "summary.json", "w", encoding="utf-8") as handle:
         json.dump(summary, handle, indent=2)
 
-    print(f"wrote {sample_count} samples to {output_path}")
+    log_progress(written, sample_count, len(failures), started_at, prefix="done")
+    print(f"wrote {sample_count} samples to {output_path}", flush=True)
     print(json.dumps(summary, indent=2))
 
 

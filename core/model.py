@@ -43,7 +43,9 @@ class ConvNeXtTinyDetector(nn.Module):
     ) -> None:
         super().__init__()
         self.backbone = backbone
+        self.pretrained_requested = pretrained
         self.uses_timm = False
+        self.pretrained_loaded = False
         try:
             import timm
 
@@ -56,6 +58,7 @@ class ConvNeXtTinyDetector(nn.Module):
             )
             rgb_features = int(self.rgb_backbone.num_features)
             self.uses_timm = True
+            self.pretrained_loaded = pretrained
         except Exception as exc:
             if not allow_fallback:
                 raise RuntimeError(

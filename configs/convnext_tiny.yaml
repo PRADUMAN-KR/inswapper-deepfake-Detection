@@ -7,9 +7,9 @@ model:
 
 data:
   root_dir: .
-  train_manifest: data/train.csv
-  val_manifest: data/val.csv
-  test_manifest: data/test.csv
+  train_manifest: data/zarr/train.zarr
+  val_manifest: data/zarr/val.zarr
+  test_manifest: data/zarr/test.zarr
 
 train:
   device: auto
@@ -21,7 +21,10 @@ train:
   grad_accum_steps: 1
   max_grad_norm: 1.0
   balanced_sampler: true
-  early_stopping_patience: 7
+  log_every: 100
+  val_log_every: 100
+  early_stopping_metric: f1
+  early_stopping_patience: 8
   early_stopping_min_delta: 0.0005
   cudnn_benchmark: true
   phases:

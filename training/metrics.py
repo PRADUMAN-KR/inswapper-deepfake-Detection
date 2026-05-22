@@ -18,6 +18,10 @@ class BinaryMetrics:
     false_negative_rate: float
     best_threshold: float
     product_score: float
+    true_negative: int
+    false_positive: int
+    false_negative: int
+    true_positive: int
 
 
 def threshold_sweep(labels: np.ndarray, scores: np.ndarray) -> tuple[float, float]:
@@ -43,6 +47,10 @@ def compute_binary_metrics(labels: list[float], scores: list[float]) -> BinaryMe
     eer = equal_error_rate(y_true, y_score) if len(np.unique(y_true)) > 1 else 0.5
     false_positive_rate = float(((y_pred == 1) & (y_true == 0)).sum() / max(1, (y_true == 0).sum()))
     false_negative_rate = float(((y_pred == 0) & (y_true == 1)).sum() / max(1, (y_true == 1).sum()))
+    true_negative = int(((y_pred == 0) & (y_true == 0)).sum())
+    false_positive = int(((y_pred == 1) & (y_true == 0)).sum())
+    false_negative = int(((y_pred == 0) & (y_true == 1)).sum())
+    true_positive = int(((y_pred == 1) & (y_true == 1)).sum())
     return BinaryMetrics(
         auc=float(auc),
         accuracy=float(accuracy_score(y_true, y_pred)),
@@ -54,6 +62,10 @@ def compute_binary_metrics(labels: list[float], scores: list[float]) -> BinaryMe
         false_negative_rate=false_negative_rate,
         best_threshold=threshold,
         product_score=float(0.55 * auc + 0.35 * best_f1 + 0.10 * (1.0 - false_positive_rate)),
+        true_negative=true_negative,
+        false_positive=false_positive,
+        false_negative=false_negative,
+        true_positive=true_positive,
     )
 
 
