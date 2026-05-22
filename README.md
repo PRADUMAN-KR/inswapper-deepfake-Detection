@@ -1,5 +1,5 @@
 
-# InSwapper Detector
+# InSwapper Detector: Open-Source Deepfake Face Swap Detection Pipeline
 
 > 🚧 This project is currently under active development.
 > APIs, architecture, and training pipeline may change frequently.
@@ -7,7 +7,7 @@
 ![Status](https://img.shields.io/badge/status-under--development-orange)
 
 
-Production-oriented pipeline for detecting INSwapper face swaps.
+Open-source deepfake detection pipeline for detecting InSwapper face swaps, AI-generated face manipulation, forged face videos, and face-swap artifacts using ConvNeXt-Tiny, frequency features, scene-aware video sampling, and FastAPI inference.
 
 ## Layout
 
@@ -399,3 +399,8 @@ This avoids wasting all samples on near-duplicate frames from one shot and gives
 - Put the trained checkpoint at `checkpoints/best_model.pt` or set `INSWAPPER_MODEL_PATH`.
 - Tune `INSWAPPER_THRESHOLD` from validation metrics, not from the test set.
 - Default face detection is `INSWAPPER_FACE_DETECTOR=insightface`. Use `opencv_haar` only for local development experiments.
+
+
+
+topics:?
+Deepfake detection, InSwapper detector, face swap detection, AI-generated face detection, forged video detection, ConvNeXt deepfake model, deepfake artifact detection, face manipulation detection, FastAPI deepfake API, PyTorch deepfake detector
