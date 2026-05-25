@@ -7,14 +7,9 @@ router = APIRouter()
 
 
 @router.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
-
-
-@router.get("/ready")
-def ready(model: DetectorService = Depends(get_model)) -> dict[str, object]:
+def health(model: DetectorService = Depends(get_model)) -> dict[str, object]:
     return {
-        "status": "ready" if model.is_ready else "degraded",
+        "status": "ok" if model.is_ready else "degraded",
         "model_loaded": model.checkpoint_loaded,
         "device": str(model.device),
         "threshold": model.threshold,

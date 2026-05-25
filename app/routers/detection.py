@@ -1,21 +1,11 @@
-import base64
-import binascii
-from typing import Annotated
-
-from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi import HTTPException, UploadFile, status
 from PIL import UnidentifiedImageError
 
 from app.config import Settings, get_settings
-from app.dependencies import get_model
-from app.schemas.detection import (
-    BatchDetectionResponse,
-    DetectionRequest,
-    DetectionResponse,
-    VideoDetectionResponse,
-)
+from app.schemas.detection import DetectionResponse, VideoDetectionResponse
 from core.inference import DetectorService
 
-router = APIRouter()
+VIDEO_EXTENSIONS = {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".mpeg", ".mpg", ".webm"}
 
 
 async def _read_upload(file: UploadFile, settings: Settings) -> bytes:
@@ -29,85 +19,46 @@ async def _read_upload(file: UploadFile, settings: Settings) -> bytes:
     return data
 
 
-@router.post("", response_model=DetectionResponse)
-async def detect(
-    file: Annotated[UploadFile, File(description="Image file to classify.")],
-    settings: Annotated[Settings, Depends(get_settings)],
-    service: Annotated[DetectorService, Depends(get_model)],
-) -> DetectionResponse:
-    data = await _read_upload(file, settings)
+def _upload_suffix(filename: str | None, default: str = ".mp4") -> str:
+    if filename and "." in filename:
+        return f".{filename.rsplit('.', 1)[-1].lower()}"
+    return default
+
+
+def _is_video_upload(filename: str | None, content_type: str | None) -> bool:
+    if content_type and content_type.startswith("video/"):
+        return True
+    return _upload_suffix(filename, default="") in VIDEO_EXTENSIONS
+
+
+def classify_upload_bytes(
+    data: bytes,
+    filename: str | None,
+    content_type: str | None,
+    service: DetectorService,
+    frames_per_scene: int = 6,
+    scene_threshold: float = 0.55,
+    max_scenes: int = 12,
+) -> DetectionResponse | VideoDetectionResponse:
+    if _is_video_upload(filename, content_type):
+        try:
+            result = service.predict_video_bytes(
+                data,
+                suffix=_upload_suffix(filename),
+                frames_per_scene=frames_per_scene,
+                scene_threshold=scene_threshold,
+                max_scenes=max_scenes,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
+        return VideoDetectionResponse(filename=filename, **result.__dict__)
+
     try:
         result = service.predict_bytes(data)
     except (OSError, ValueError, UnidentifiedImageError) as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image file.") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return DetectionResponse(filename=file.filename, result=result)
-
-
-@router.post("/base64", response_model=DetectionResponse)
-async def detect_base64(
-    payload: DetectionRequest,
-    service: Annotated[DetectorService, Depends(get_model)],
-) -> DetectionResponse:
-    try:
-        data = base64.b64decode(payload.image_base64, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid base64 image.") from exc
-    try:
-        result = service.predict_bytes(data)
-    except (OSError, ValueError, UnidentifiedImageError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid image file.") from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return DetectionResponse(filename=None, result=result)
-
-
-@router.post("/video", response_model=VideoDetectionResponse)
-async def detect_video(
-    file: Annotated[UploadFile, File(description="Video file to classify.")],
-    settings: Annotated[Settings, Depends(get_settings)],
-    service: Annotated[DetectorService, Depends(get_model)],
-    frames_per_scene: Annotated[int, Query(ge=1, le=12)] = 6,
-    scene_threshold: Annotated[float, Query(ge=0.05, le=1.0)] = 0.55,
-    max_scenes: Annotated[int, Query(ge=1, le=50)] = 12,
-) -> VideoDetectionResponse:
-    data = await _read_upload(file, settings)
-    suffix = f".{file.filename.rsplit('.', 1)[-1]}" if file.filename and "." in file.filename else ".mp4"
-    try:
-        result = service.predict_video_bytes(
-            data,
-            suffix=suffix,
-            frames_per_scene=frames_per_scene,
-            scene_threshold=scene_threshold,
-            max_scenes=max_scenes,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return VideoDetectionResponse(filename=file.filename, **result.__dict__)
-
-
-@router.post("/batch", response_model=BatchDetectionResponse)
-async def detect_batch(
-    files: Annotated[list[UploadFile], File(description="Image files to classify.")],
-    settings: Annotated[Settings, Depends(get_settings)],
-    service: Annotated[DetectorService, Depends(get_model)],
-) -> BatchDetectionResponse:
-    if not files:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No files provided.")
-
-    images = [await _read_upload(file, settings) for file in files]
-    try:
-        results = service.predict_batch_bytes(images)
-    except (OSError, ValueError, UnidentifiedImageError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more image files are invalid.") from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(exc)) from exc
-    return BatchDetectionResponse(
-        items=[
-            DetectionResponse(filename=file.filename, result=result)
-            for file, result in zip(files, results, strict=True)
-        ]
-    )
+    return DetectionResponse(filename=filename, result=result)

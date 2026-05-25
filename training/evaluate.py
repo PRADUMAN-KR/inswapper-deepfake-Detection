@@ -21,6 +21,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint", default="checkpoints/best_model.pt")
     parser.add_argument("--manifest", default=None)
     parser.add_argument("--output", default="checkpoints/eval_predictions.csv")
+    parser.add_argument("--verbose", action="store_true", help="Print dataset, checkpoint, and batch progress.")
+    parser.add_argument("--log-every", type=int, default=50, help="Verbose progress interval in batches.")
     return parser.parse_args()
 
 
@@ -30,6 +32,11 @@ def main() -> None:
     cfg = yaml.safe_load(open(args.config, "r", encoding="utf-8"))
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     manifest = args.manifest or cfg["data"].get("test_manifest") or cfg["data"]["val_manifest"]
+    if args.verbose:
+        print(f"config              {args.config}")
+        print(f"checkpoint          {args.checkpoint}")
+        print(f"manifest            {manifest}")
+        print(f"device              {device}")
     ds = create_dataset(
         manifest,
         image_size=cfg["model"]["image_size"],
@@ -38,6 +45,10 @@ def main() -> None:
         frequency_mode=cfg["model"].get("frequency_mode", "fft"),
     )
     loader = DataLoader(ds, batch_size=cfg["train"]["batch_size"], shuffle=False, num_workers=cfg["train"]["num_workers"])
+    if args.verbose:
+        print(f"samples             {len(ds)}")
+        print(f"batches             {len(loader)}")
+        print(f"batch_size          {cfg['train']['batch_size']}")
     model = load_from_checkpoint(args.checkpoint, device=device, backbone=cfg["model"]["backbone"]).eval()
 
     labels: list[float] = []
@@ -45,7 +56,8 @@ def main() -> None:
     real_fake: list[float] = []
     inswapper: list[float] = []
     boundary: list[float] = []
-    for batch in loader:
+    log_every = max(1, args.log_every)
+    for step, batch in enumerate(loader, start=1):
         outputs = model(
             batch["rgb"].to(device),
             frequency=batch["frequency"].to(device),
@@ -55,6 +67,8 @@ def main() -> None:
         real_fake.extend(torch.sigmoid(outputs["real_fake"]).flatten().cpu().tolist())
         inswapper.extend(torch.sigmoid(outputs["inswapper"]).flatten().cpu().tolist())
         boundary.extend(torch.sigmoid(outputs["boundary"]).flatten().cpu().tolist())
+        if args.verbose and (step == 1 or step % log_every == 0 or step == len(loader)):
+            print(f"evaluated batches   {step}/{len(loader)}")
 
     scores = fuse_detection_scores(
         real_fake=torch.tensor(real_fake).numpy(),
@@ -74,6 +88,8 @@ def main() -> None:
         writer = csv.writer(handle)
         writer.writerow(["label", "final_score", "real_fake", "inswapper", "boundary", "prediction"])
         writer.writerows(zip(labels, scores, real_fake, inswapper, boundary, preds, strict=True))
+    if args.verbose:
+        print(f"predictions_csv     {args.output}")
 
 
 if __name__ == "__main__":

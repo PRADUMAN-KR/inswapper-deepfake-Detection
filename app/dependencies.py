@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends
 
 from app.config import Settings, get_settings
 from core.inference import DetectorService
@@ -29,21 +29,3 @@ def reload_model(settings: Settings | None = None) -> DetectorService:
     settings = settings or get_settings()
     _service = build_service(settings)
     return _service
-
-
-def require_admin(
-    settings: Annotated[Settings, Depends(get_settings)],
-    authorization: Annotated[str | None, Header()] = None,
-) -> None:
-    if not settings.admin_token:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin token is not configured.",
-        )
-    expected = f"Bearer {settings.admin_token}"
-    if authorization != expected:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid admin token.",
-        )
-

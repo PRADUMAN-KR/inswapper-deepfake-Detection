@@ -1,10 +1,6 @@
 from pydantic import BaseModel, Field
 
 
-class DetectionRequest(BaseModel):
-    image_base64: str = Field(description="Base64 encoded image.")
-
-
 class DetectionResult(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -19,10 +15,6 @@ class DetectionResult(BaseModel):
 class DetectionResponse(BaseModel):
     filename: str | None = None
     result: DetectionResult
-
-
-class BatchDetectionResponse(BaseModel):
-    items: list[DetectionResponse]
 
 
 class VideoFrameDetection(BaseModel):
@@ -42,3 +34,15 @@ class VideoDetectionResponse(BaseModel):
     scene_count: int
     sampled_frame_count: int
     frames: list[VideoFrameDetection]
+
+
+class SubmitResponse(BaseModel):
+    task_id: str
+    status: str = "processing"
+
+
+class TaskStatusResponse(BaseModel):
+    task_id: str
+    status: str
+    result: DetectionResponse | VideoDetectionResponse | None = None
+    error: str | None = None

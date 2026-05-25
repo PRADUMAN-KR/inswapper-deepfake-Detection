@@ -16,7 +16,6 @@ class Settings(BaseSettings):
     device: str = "auto"
     max_upload_mb: int = Field(default=100, ge=1)
     cors_origins: list[str] = ["*"]
-    admin_token: str | None = None
 
     model_config = SettingsConfigDict(
         env_file=".env",

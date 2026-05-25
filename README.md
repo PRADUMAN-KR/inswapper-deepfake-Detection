@@ -363,18 +363,15 @@ uvicorn app.main:app --reload
 
 Endpoints:
 
-- `GET /health`
-- `GET /ready`
-- `POST /detect`
-- `POST /detect/batch`
-- `POST /detect/video`
-- `POST /admin/reload-model`
-- `POST /admin/threshold`
+- `GET /health` for service and model status
+- `POST /submit` for queued image or video detection
+- `GET /status/{task_id}` for queued detection status and result
 
 Example:
 
 ```bash
-curl -F "file=@face.jpg" http://localhost:8000/detect
+curl -F "file=@face.jpg" http://localhost:8000/submit
+curl http://localhost:8000/status/<task_id>
 ```
 
 Local inference without the API:

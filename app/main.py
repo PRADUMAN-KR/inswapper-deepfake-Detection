@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import get_settings
 from app.dependencies import reload_model
-from app.routers import admin, detection, health
+from app.routers import health, tasks
 
 
 @asynccontextmanager
@@ -30,10 +30,8 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.include_router(health.router, tags=["health"])
-    app.include_router(detection.router, prefix="/detect", tags=["detection"])
-    app.include_router(admin.router, prefix="/admin", tags=["admin"])
+    app.include_router(tasks.router, tags=["tasks"])
     return app
 
 
 app = create_app()
-
